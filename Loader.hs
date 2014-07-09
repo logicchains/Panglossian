@@ -21,6 +21,8 @@ import Panglossian.Types as P
 
 actionSuffix = "_A.json"
 actionFolder = "./Panglossian"
+scriptSuffix = "_S.json"
+scriptFolder = "./Panglossian"
 
 type NameList = ([Text], HashSet Text)
 
@@ -70,7 +72,7 @@ data JScript = JScript {
     } deriving Show
 
 instance FromJSON JScript where
-    parseJSON (Object v) = JScript <$> v .: "scriptName" <*> v .: "body"
+    parseJSON (Object v) = JScript <$> v .: "name" <*> v .: "body"
     parseJSON _          = mzero
 
 findFilesSuffixed :: String -> String -> IO [FilePath]
@@ -88,12 +90,6 @@ loadJType fileNames = do
       parts = fmap (L.partition isRight) possibleActions
       possibleActions = fmap (L.map toAction) $ mapM BS.readFile fileNames
       toAction = (\x -> eitherDecode x :: FromJSON a => Either String a)
-
-loadAll :: IO [()]
-loadAll = do
-  actionFiles <- findFilesSuffixed actionSuffix actionFolder
-  (jActs, errs) <- (loadJType actionFiles :: IO ([JAction], [String]))
-  mapM putStrLn errs
 
 parseAction :: NameList-> NameList ->  JAction ->  (P.Action, NameList, NameList)
 parseAction propNames scriptNames JAction {..} = (P.Action {name, constraints=newConstraints, specials=newSpecials,
@@ -131,3 +127,11 @@ getPropNameIndex :: NameList -> Text -> (Int, NameList)
 getPropNameIndex (registry, hash) name = if member name hash then (L.length registry, (registry, hash))  
                                       else ((L.length registry) + 1, (registry ++ [name], insert name hash))
           
+loadAll :: IO [()]
+loadAll = do
+  actionFiles <- findFilesSuffixed actionSuffix actionFolder
+  scriptFiles <- findFilesSuffixed scriptSuffix scriptFolder
+  (jActs, actErrs) <- (loadJType actionFiles :: IO ([JAction], [String]))
+  (jScripts, scriptErrs) <- (loadJType scriptFiles :: IO ([JScript], [String]))
+  mapM print jActs
+  mapM putStrLn actErrs
