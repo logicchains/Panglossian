@@ -1,0 +1,4 @@
+{
+    "name": "in-reach",
+    "body": "(let ( (x1 (this x)) (x2 (oth x)) (y1 (this y)) (y2 (oth y)) (reach (this reach))) (< reach ( + (* (- x2 x1) (- x2 x1)) (* (- y2 y1) (- y2 y1)))))"
+}

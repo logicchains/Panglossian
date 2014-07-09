@@ -1,19 +1,22 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE PackageImports #-}
 module Panglossian.Loader (findFilesSuffixed) where
 
 import Control.Applicative
 import Control.Monad
 import Data.Aeson
 import Data.Either.Unwrap (fromLeft, fromRight, isRight)
-import Data.HashSet
+import qualified Data.Set as S
 import Data.Int
 import qualified Data.List as L
 import Data.Text
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
 import Data.Word
+import Debug.Trace
 import qualified System.FilePath.FilePather as Pather
 import qualified Data.ByteString.Lazy as BS
 
@@ -24,7 +27,7 @@ actionFolder = "./Panglossian"
 scriptSuffix = "_S.json"
 scriptFolder = "./Panglossian"
 
-type NameList = ([Text], HashSet Text)
+type NameList = ([Text], S.Set Text)
 
 data JAction = JAction {
       name :: Text,
@@ -48,13 +51,13 @@ instance FromJSON JAction where
      parseJSON _          = mzero
 
 data JModifier =  JModifier {
-	modifiesProp :: Text,
+	modifiedBy :: Text,
 	exponent :: Word8,
 	multiplier :: Word32
     } deriving Show
 
 instance FromJSON JModifier where
-    parseJSON (Object v) = JModifier <$> v .: "modifiesProp" <*> v .: "exponent" <*> v .: "multiplier"
+    parseJSON (Object v) = JModifier <$> v .: "modifiedBy" <*> v .: "exponent" <*> v .: "multiplier"
     parseJSON _          = mzero
 
 data JProperty = JProperty {
@@ -91,23 +94,30 @@ loadJType fileNames = do
       possibleActions = fmap (L.map toAction) $ mapM BS.readFile fileNames
       toAction = (\x -> eitherDecode x :: FromJSON a => Either String a)
 
-parseAction :: NameList-> NameList ->  JAction ->  (P.Action, NameList, NameList)
-parseAction propNames scriptNames JAction {..} = (P.Action {name, constraints=newConstraints, specials=newSpecials,
-                                                actorAffects=newAAffects, targetAffects=newTAffects, 
-                                               prereqs=newPrereqs, consumes=newConsumes}, newPNames4, newSNames2)
-    where 
-      (newPrereqs, newPNames) = parseJTypes parseProperty propNames prereqs ([],([],Data.HashSet.empty))
-      (newConsumes, newPNames2) = parseJTypes parseProperty newPNames consumes ([],([],Data.HashSet.empty))
-      (newAAffects, newPNames3) = parseJTypes parseModifier newPNames2 actorAffects ([],([],Data.HashSet.empty))
-      (newTAffects, newPNames4) = parseJTypes parseModifier newPNames3 targetAffects ([],([],Data.HashSet.empty))
-      (newConstraints, newSNames) = parseJTypes parseScriptName scriptNames constraints ([],([],Data.HashSet.empty))
-      (newSpecials, newSNames2) = parseJTypes parseScriptName newSNames specials ([],([],Data.HashSet.empty))
+type NamePairs = (NameList, NameList)
 
+parseActions :: NamePairs -> [JAction] -> ([P.Action], NamePairs) -> ([P.Action], NamePairs)
+parseActions  _ [] res = res
+parseActions names (x:xs) (js,_) = parseActions newNames xs ((j:js),newNames)
+    where (j, newNames) = parseAction names x 
+
+
+parseAction :: NamePairs -> JAction ->  (P.Action, NamePairs)
+parseAction (propNames, scriptNames) JAction {..} = (P.Action {name, constraints=newConstraints, specials=newSpecials,
+                                                actorAffects=newAAffects, targetAffects=newTAffects, 
+                                               prereqs=newPrereqs, consumes=newConsumes}, (newPNames4, newSNames2))
+    where 
+      (newPrereqs, newPNames) = parseJTypes parseProperty propNames prereqs ([],([],S.empty))
+      (newConsumes, newPNames2) = parseJTypes parseProperty newPNames consumes ([],([],S.empty))
+      (newAAffects, newPNames3) = parseJTypes parseModifier newPNames2 actorAffects ([],([],S.empty))
+      (newTAffects, newPNames4) = parseJTypes parseModifier newPNames3 targetAffects ([],([],S.empty))
+      (newConstraints, newSNames) = parseJTypes parseScriptName scriptNames constraints ([],([],S.empty))
+      (newSpecials, newSNames2) = parseJTypes parseScriptName newSNames specials ([],([],S.empty))
 
 type JParser a b = (NameList -> a -> (b, NameList))
 
 parseJTypes :: JParser ja a ->  NameList -> [ja] -> ([a], NameList) -> ([a], NameList)
-parseJTypes _  _ [] res = res
+parseJTypes _ _ [] res = res
 parseJTypes parseFunc names (x:xs) (js,_) = parseJTypes parseFunc newNames xs ((j:js),newNames)
     where (j, newNames) = parseFunc names x 
 
@@ -117,15 +127,17 @@ parseScriptName names name  = (P.Script {scriptID = fromIntegral index, body= "N
 
 parseModifier :: NameList -> JModifier ->  (P.Modifier, NameList)
 parseModifier names JModifier{..}  = (P.Modifier {modifiesProp = fromIntegral index, exponent, multiplier}, newNames)
-    where (index, newNames) =  getPropNameIndex names modifiesProp
+    where (index, newNames) =  getPropNameIndex names modifiedBy
 
 parseProperty :: NameList -> JProperty ->  (P.Property, NameList)
 parseProperty names JProperty{..}  = (P.Property {propertyID = fromIntegral index, value}, newNames)
     where (index, newNames) =  getPropNameIndex names property
 
 getPropNameIndex :: NameList -> Text -> (Int, NameList)
-getPropNameIndex (registry, hash) name = if member name hash then (L.length registry, (registry, hash))  
-                                      else ((L.length registry) + 1, (registry ++ [name], insert name hash))
+getPropNameIndex (registry, hash) name = if S.member name hash then (L.length registry, (registry, hash))  
+                                      else ((L.length registry) + 1, (registry ++ [name], S.insert name hash))
+
+dbg a = (trace ("\n\ndoing it" ++(show a) ++"\n") a)
           
 loadAll :: IO [()]
 loadAll = do
@@ -133,5 +145,8 @@ loadAll = do
   scriptFiles <- findFilesSuffixed scriptSuffix scriptFolder
   (jActs, actErrs) <- (loadJType actionFiles :: IO ([JAction], [String]))
   (jScripts, scriptErrs) <- (loadJType scriptFiles :: IO ([JScript], [String]))
-  mapM print jActs
-  mapM putStrLn actErrs
+  let parseResults = parseActions (([], S.empty), ([], S.empty)) jActs ([], (([], S.empty), ([], S.empty)))
+  let (actions, ((propNames,propHash), (scriptNames,scriptHash))) = parseResults
+  mapM print actions
+  mapM print scriptNames
+  mapM print propNames

@@ -1,0 +1,27 @@
+{
+    "name": "cook",
+    "constraints": [
+	"in-reach"
+    ],
+    "specials": [
+	"dummy"
+    ],
+    "actorAffects": [
+	{"modifiedBy": "skill", "exponent": 1, "multiplier": 1}
+    ],
+    "targetAffects": [
+	{"modifiedBy": "insulation", "exponent": 1, "multiplier": 1}
+    ],
+    "prereqs": [
+	{"property": "hands", "value": 1},
+	{"property": "fire", "value": 100},
+	{"property": "fuel", "value":  14},
+	{"property": "cutlery", "value": 1}
+    ],
+    
+    "consumes": [
+	{"property": "deliciousness", "value": 10},
+	{"property": "healthiness", "value": 20},
+	{"property": "health", "value": -1}
+    ]
+}
