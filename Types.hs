@@ -1,4 +1,4 @@
-module Panglossian.Types (Action, Modifier) where
+module Panglossian.Types (Action(..), Property(..), Modifier(..), Script(..)) where
 
 import Data.Int
 import Data.Text
@@ -21,8 +21,12 @@ data Modifier =  Modifier {
     } deriving Show
 
 data Property = Property {
-	property :: Word32,
+	propertyID :: Word32,
 	value :: Int64
     } deriving Show
 
-data Script = Script Text deriving Show
+data Script = Script {
+      scriptID :: Word32,
+      body :: Text
+    } deriving Show
+           
