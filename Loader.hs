@@ -28,8 +28,8 @@ type NameList = ([Text], HashSet Text)
 
 data JAction = JAction {
       name :: Text,
-      constraints ::  [JScript],
-      specials ::  [JScript],
+      constraints ::  [Text],
+      specials ::  [Text],
       actorAffects :: [JModifier],
       targetAffects :: [JModifier],
       prereqs :: [JProperty],
@@ -100,8 +100,8 @@ parseAction propNames scriptNames JAction {..} = (P.Action {name, constraints=ne
       (newConsumes, newPNames2) = parseJTypes parseProperty newPNames consumes ([],([],Data.HashSet.empty))
       (newAAffects, newPNames3) = parseJTypes parseModifier newPNames2 actorAffects ([],([],Data.HashSet.empty))
       (newTAffects, newPNames4) = parseJTypes parseModifier newPNames3 targetAffects ([],([],Data.HashSet.empty))
-      (newConstraints, newSNames) = parseJTypes parseScript scriptNames constraints ([],([],Data.HashSet.empty))
-      (newSpecials, newSNames2) = parseJTypes parseScript newSNames specials ([],([],Data.HashSet.empty))
+      (newConstraints, newSNames) = parseJTypes parseScriptName scriptNames constraints ([],([],Data.HashSet.empty))
+      (newSpecials, newSNames2) = parseJTypes parseScriptName newSNames specials ([],([],Data.HashSet.empty))
 
 
 type JParser a b = (NameList -> a -> (b, NameList))
@@ -111,9 +111,9 @@ parseJTypes _  _ [] res = res
 parseJTypes parseFunc names (x:xs) (js,_) = parseJTypes parseFunc newNames xs ((j:js),newNames)
     where (j, newNames) = parseFunc names x 
 
-parseScript :: NameList -> JScript -> (P.Script, NameList)
-parseScript names JScript{..}  = (P.Script {scriptID = fromIntegral index, body}, newNames)
-    where (index, newNames) =  getPropNameIndex names scriptName
+parseScriptName :: NameList -> Text -> (P.Script, NameList)
+parseScriptName names name  = (P.Script {scriptID = fromIntegral index, body= "NULL"}, newNames)
+    where (index, newNames) =  getPropNameIndex names name
 
 parseModifier :: NameList -> JModifier ->  (P.Modifier, NameList)
 parseModifier names JModifier{..}  = (P.Modifier {modifiesProp = fromIntegral index, exponent, multiplier}, newNames)
