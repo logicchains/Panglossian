@@ -117,8 +117,8 @@ parseAction (propNames, scriptNames) JAction {..} = (P.Action {name, constraints
 type JParser a b = (NameList -> a -> (b, NameList))
 
 parseJTypes :: JParser ja a ->  NameList -> [ja] -> ([a], NameList) -> ([a], NameList)
-parseJTypes _ _ [] res = res
-parseJTypes parseFunc names (x:xs) (js,_) = parseJTypes parseFunc newNames xs ((j:js),newNames)
+parseJTypes _ names [] (res,_) = (res, names)
+parseJTypes parseFunc names (x:xs) (js,_) = parseJTypes parseFunc newNames xs ((j:js),names)
     where (j, newNames) = parseFunc names x 
 
 parseScriptName :: NameList -> Text -> (P.Script, NameList)

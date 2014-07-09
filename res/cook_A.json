@@ -4,10 +4,8 @@
 	"in-reach"
     ],
     "specials": [
-	"dummy"
     ],
     "actorAffects": [
-	{"modifiedBy": "skill", "exponent": 1, "multiplier": 1}
     ],
     "targetAffects": [
 	{"modifiedBy": "insulation", "exponent": 1, "multiplier": 1}
