@@ -1,0 +1,8 @@
+{
+    "name" : "egg",
+    "properties": [
+	{"property": "healthiness", "value": 10},
+	{"property": "deliciousness", "value": 20},
+	{"property": "baby-chicken", "value": 1}
+    ]
+}

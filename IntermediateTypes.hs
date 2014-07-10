@@ -4,7 +4,7 @@ import Data.Text
 import Panglossian.Types as P
 
 data LAction = LAction {
-      name :: Text,
+      actName :: Text,
       constraints :: [P.Script],
       specials ::  [P.Script],
       actorAffects :: [P.Modifier],
@@ -12,3 +12,4 @@ data LAction = LAction {
       prereqs :: [P.Property],
       consumes :: [P.Property]
     } deriving Show
+
