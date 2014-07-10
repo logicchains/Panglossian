@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -15,19 +14,20 @@ import qualified Data.List as L
 import Data.Text
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
+import Data.Ord
 import Data.Word
 import Debug.Trace
 import qualified System.FilePath.FilePather as Pather
+import System.FilePath
 import qualified Data.ByteString.Lazy as BS
 
 import Panglossian.Types as P
+import Panglossian.IntermediateTypes as IT
 
 actionSuffix = "_A.json"
 actionFolder = "./Panglossian"
 scriptSuffix = "_S.json"
 scriptFolder = "./Panglossian"
-
-type NameList = ([Text], S.Set Text)
 
 data JAction = JAction {
       name :: Text,
@@ -84,6 +84,12 @@ findFilesSuffixed suffix folderName = Pather.findp filterPred recursePred folder
       filterPred = Pather.filterPredicate' (\x -> (L.drop (L.length x - (L.length suffix)) x) == suffix)
       recursePred = Pather.recursePredicate (\x -> True)
 
+sortFilePaths :: [FilePath] -> [FilePath]
+sortFilePaths paths = L.sortBy sortFiles paths
+    where sortFiles = (\a b -> if (takeFileName a) < (takeFileName b) then LT
+                               else if (takeFileName a) > (takeFileName b) then GT
+                               else EQ)
+
 loadJType :: FromJSON a => [String] -> IO ([a], [String])
 loadJType fileNames = do
   acts <- (L.map fromRight) <$> fst <$> parts
@@ -94,55 +100,48 @@ loadJType fileNames = do
       possibleActions = fmap (L.map toAction) $ mapM BS.readFile fileNames
       toAction = (\x -> eitherDecode x :: FromJSON a => Either String a)
 
+type NameList = ([Text], S.Set Text)
 type NamePairs = (NameList, NameList)
 
-parseActions :: NamePairs -> [JAction] -> ([P.Action], NamePairs) -> ([P.Action], NamePairs)
+parseActions :: NamePairs -> [JAction] -> ([IT.LAction], NamePairs) -> ([IT.LAction], NamePairs)
 parseActions  _ [] res = res
 parseActions names (x:xs) (js,_) = parseActions newNames xs ((j:js),newNames)
     where (j, newNames) = parseAction names x 
 
-
-parseAction :: NamePairs -> JAction ->  (P.Action, NamePairs)
-parseAction (propNames, scriptNames) JAction {..} = (P.Action {name, constraints=newConstraints, specials=newSpecials,
+parseAction :: NamePairs -> JAction ->  (IT.LAction, NamePairs)
+parseAction (propNames, scriptNames) JAction {..} = (IT.LAction {name, constraints=newConstraints, specials=newSpecials,
                                                 actorAffects=newAAffects, targetAffects=newTAffects, 
                                                prereqs=newPrereqs, consumes=newConsumes}, (newPNames4, newSNames2))
     where 
-      (newPrereqs, newPNames) = parseJTypes parseProperty propNames prereqs ([],([],S.empty))
-      (newConsumes, newPNames2) = parseJTypes parseProperty newPNames consumes ([],([],S.empty))
-      (newAAffects, newPNames3) = parseJTypes parseModifier newPNames2 actorAffects ([],([],S.empty))
-      (newTAffects, newPNames4) = parseJTypes parseModifier newPNames3 targetAffects ([],([],S.empty))
-      (newConstraints, newSNames) = parseJTypes parseScriptName scriptNames constraints ([],([],S.empty))
-      (newSpecials, newSNames2) = parseJTypes parseScriptName newSNames specials ([],([],S.empty))
+      (newPNames, newPrereqs) = L.mapAccumL parseProperty propNames prereqs
+      (newPNames2, newConsumes) = L.mapAccumL parseProperty newPNames consumes
+      (newPNames3, newAAffects) = L.mapAccumL parseModifier newPNames2 actorAffects
+      (newPNames4,newTAffects) = L.mapAccumL parseModifier newPNames3 targetAffects
+      (newSNames, newConstraints) = L.mapAccumL parseScriptName scriptNames constraints
+      (newSNames2, newSpecials) = L.mapAccumL parseScriptName newSNames specials
 
-type JParser a b = (NameList -> a -> (b, NameList))
-
-parseJTypes :: JParser ja a ->  NameList -> [ja] -> ([a], NameList) -> ([a], NameList)
-parseJTypes _ names [] (res,_) = (res, names)
-parseJTypes parseFunc names (x:xs) (js,_) = parseJTypes parseFunc newNames xs ((j:js),names)
-    where (j, newNames) = parseFunc names x 
-
-parseScriptName :: NameList -> Text -> (P.Script, NameList)
-parseScriptName names name  = (P.Script {scriptID = fromIntegral index, body= "NULL"}, newNames)
+parseScriptName :: NameList -> Text -> (NameList, P.Script)
+parseScriptName names name  = (newNames, P.Script {scriptID = fromIntegral index, body= "NULL"})
     where (index, newNames) =  getPropNameIndex names name
 
-parseModifier :: NameList -> JModifier ->  (P.Modifier, NameList)
-parseModifier names JModifier{..}  = (P.Modifier {modifiesProp = fromIntegral index, exponent, multiplier}, newNames)
+parseModifier :: NameList -> JModifier -> (NameList, P.Modifier)
+parseModifier names JModifier{..}  = (newNames, P.Modifier {modifiesProp = fromIntegral index, exponent, multiplier})
     where (index, newNames) =  getPropNameIndex names modifiedBy
 
-parseProperty :: NameList -> JProperty ->  (P.Property, NameList)
-parseProperty names JProperty{..}  = (P.Property {propertyID = fromIntegral index, value}, newNames)
+parseProperty :: NameList -> JProperty -> (NameList, P.Property)
+parseProperty names JProperty{..}  = (newNames, P.Property {propertyID = fromIntegral index, value})
     where (index, newNames) =  getPropNameIndex names property
 
 getPropNameIndex :: NameList -> Text -> (Int, NameList)
 getPropNameIndex (registry, hash) name = if S.member name hash then (L.length registry, (registry, hash))  
-                                      else ((L.length registry) + 1, (registry ++ [name], S.insert name hash))
+                                      else (L.length registry, (registry ++ [name], S.insert name hash))
 
 dbg a = (trace ("\n\ndoing it" ++(show a) ++"\n") a)
           
 loadAll :: IO [()]
 loadAll = do
-  actionFiles <- findFilesSuffixed actionSuffix actionFolder
-  scriptFiles <- findFilesSuffixed scriptSuffix scriptFolder
+  actionFiles <- sortFilePaths <$> findFilesSuffixed actionSuffix actionFolder
+  scriptFiles <-  sortFilePaths <$> findFilesSuffixed scriptSuffix scriptFolder
   (jActs, actErrs) <- (loadJType actionFiles :: IO ([JAction], [String]))
   (jScripts, scriptErrs) <- (loadJType scriptFiles :: IO ([JScript], [String]))
   let parseResults = parseActions (([], S.empty), ([], S.empty)) jActs ([], (([], S.empty), ([], S.empty)))
@@ -150,3 +149,5 @@ loadAll = do
   mapM print actions
   mapM print scriptNames
   mapM print propNames
+
+--printProperties 
