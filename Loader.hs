@@ -2,11 +2,14 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE PackageImports #-}
+{-# LANGUAGE TemplateHaskell #-}
 module Panglossian.Loader (findFilesSuffixed) where
 
 import Control.Applicative
 import Control.Monad
 import Data.Aeson
+import Data.Aeson.TH
+import qualified Data.Char as Ch
 import Data.Either.Unwrap (fromLeft, fromRight, isRight)
 import qualified Data.Set as S
 import Data.Int
@@ -31,75 +34,47 @@ scriptFolder = "./Panglossian"
 objectSuffix = "_O.json"
 objectFolder = "./Panglossian"
 
-data JAction = JAction {
-      actName :: Text,
-      constraints ::  [Text],
-      specials ::  [Text],
-      actorAffects :: [JModifier],
-      targetAffects :: [JModifier],
-      prereqs :: [JProperty],
-      consumes :: [JProperty]
+data JProperty = JProperty {
+	property :: Text,
+	value :: Int64
     } deriving Show
-
-instance FromJSON JAction where
-     parseJSON (Object v) = JAction <$>
-                            v .: "name" <*>
-                            v .: "constraints" <*>
-                            v .: "specials" <*>
-                            v .: "actorAffects" <*>
-                            v .: "targetAffects" <*>
-                            v .: "prereqs" <*>
-                            v .: "consumes"
-     parseJSON _          = mzero
-
-data JObject = JObject{
-      objName :: Text,
-      properties :: [JProperty]
-    } deriving Show
-
-instance FromJSON JObject where
-    parseJSON (Object v) = JObject <$> v .: "name" <*> v .: "properties"
-    parseJSON _          = mzero
+$(deriveFromJSON defaultOptions ''JProperty)
 
 data JModifier =  JModifier {
 	modifiedBy :: Text,
 	exponent :: Word8,
 	multiplier :: Word32
     } deriving Show
+$(deriveFromJSON defaultOptions ''JModifier)
 
-instance FromJSON JModifier where
-    parseJSON (Object v) = JModifier <$> v .: "modifiedBy" <*> v .: "exponent" <*> v .: "multiplier"
-    parseJSON _          = mzero
-
-data JProperty = JProperty {
-	property :: Text,
-	value :: Int64
+data JAction = JAction {
+      actname :: Text,
+      actconstraints ::  [Text],
+      actspecials ::  [Text],
+      actactorAffects :: [JModifier],
+      acttargetAffects :: [JModifier],
+      actprereqs :: [JProperty],
+      actconsumes :: [JProperty]
     } deriving Show
+$(deriveFromJSON defaultOptions{fieldLabelModifier =  L.drop 3} ''JAction)
 
-instance FromJSON JProperty where
-    parseJSON (Object v) = JProperty <$> v .: "property" <*> v .: "value"
-    parseJSON _          = mzero
+data JObject = JObject{
+      objname :: Text,
+      objproperties :: [JProperty]
+    } deriving Show
+$(deriveFromJSON defaultOptions{fieldLabelModifier =  L.drop 3} ''JObject)
 
 data JScript = JScript {
-	scriptName :: Text,
-	body :: Text
+	scrname :: Text,
+	scrbody :: Text
     } deriving Show
-
-instance FromJSON JScript where
-    parseJSON (Object v) = JScript <$> v .: "name" <*> v .: "body"
-    parseJSON _          = mzero
+$(deriveFromJSON defaultOptions{fieldLabelModifier =  L.drop 3} ''JScript)
 
 findFilesSuffixed :: String -> String -> IO [FilePath]
 findFilesSuffixed suffix folderName = Pather.findp filterPred recursePred folderName
     where 
       filterPred = Pather.filterPredicate' (\x -> (L.drop (L.length x - (L.length suffix)) x) == suffix)
       recursePred = Pather.recursePredicate (\x -> True)
-
-sortFilePaths :: [FilePath] -> [FilePath]
-sortFilePaths paths = L.sortBy sortFiles paths
-    where sortFiles = (\a b -> if (takeFileName a) < (takeFileName b) then LT
-                               else if (takeFileName a) > (takeFileName b) then GT
-                               else EQ)
 
 loadJType :: FromJSON a => [String] -> IO ([a], [String])
 loadJType fileNames = do
@@ -108,28 +83,23 @@ loadJType fileNames = do
   return (acts, errs)
     where
       parts = fmap (L.partition isRight) possibleActions
-      possibleActions = fmap (L.map toAction) $ mapM BS.readFile fileNames
+      possibleActions = L.map toAction <$> mapM BS.readFile fileNames
       toAction = (\x -> eitherDecode x :: FromJSON a => Either String a)
 
 type NameList = ([Text], S.Set Text)
 type NamePairs = (NameList, NameList)
 
-parseActions :: NamePairs -> [JAction] -> ([IT.LAction], NamePairs) -> ([IT.LAction], NamePairs)
-parseActions  _ [] res = res
-parseActions names (x:xs) (js,_) = parseActions newNames xs ((j:js),newNames)
-    where (j, newNames) = parseAction names x 
-
-parseAction :: NamePairs -> JAction ->  (IT.LAction, NamePairs)
-parseAction (propNames, scriptNames) JAction {..} = (IT.LAction {actName, constraints=newConstraints, specials=newSpecials,
-                                                actorAffects=newAAffects, targetAffects=newTAffects, 
-                                               prereqs=newPrereqs, consumes=newConsumes}, (newPNames4, newSNames2))
+parseAction :: NamePairs -> JAction ->  (NamePairs, IT.LAction)
+parseAction (propNames, scriptNames) JAction {..} = ((newPNames4, newSNames2), IT.LAction {actName=actname, 
+                           constraints=newConstraints,specials=newSpecials, actorAffects=newAAffects, 
+                           targetAffects=newTAffects, prereqs=newPrereqs, consumes=newConsumes})
     where 
-      (newPNames, newPrereqs) = L.mapAccumL parseProperty propNames prereqs
-      (newPNames2, newConsumes) = L.mapAccumL parseProperty newPNames consumes
-      (newPNames3, newAAffects) = L.mapAccumL parseModifier newPNames2 actorAffects
-      (newPNames4,newTAffects) = L.mapAccumL parseModifier newPNames3 targetAffects
-      (newSNames, newConstraints) = L.mapAccumL parseScriptName scriptNames constraints
-      (newSNames2, newSpecials) = L.mapAccumL parseScriptName newSNames specials
+      (newPNames, newPrereqs) = L.mapAccumL parseProperty propNames actprereqs
+      (newPNames2, newConsumes) = L.mapAccumL parseProperty newPNames actconsumes
+      (newPNames3, newAAffects) = L.mapAccumL parseModifier newPNames2 actactorAffects
+      (newPNames4,newTAffects) = L.mapAccumL parseModifier newPNames3 acttargetAffects
+      (newSNames, newConstraints) = L.mapAccumL parseScriptName scriptNames actconstraints
+      (newSNames2, newSpecials) = L.mapAccumL parseScriptName newSNames actspecials
 
 parseScriptName :: NameList -> Text -> (NameList, P.Script)
 parseScriptName names name  = (newNames, fromIntegral index)
@@ -148,17 +118,17 @@ getPropNameIndex (registry, hash) name = if S.member name hash then (L.length re
                                       else (L.length registry, (registry ++ [name], S.insert name hash))
 
 findNLoadJType :: FromJSON a => String -> String -> IO ([a], [String])
-findNLoadJType suffix folder = sortFilePaths <$> findFilesSuffixed suffix folder >>= loadJType
-    where paths = sortFilePaths <$> findFilesSuffixed suffix folder
+findNLoadJType suffix folder = L.sortBy compare <$> findFilesSuffixed suffix folder >>= loadJType
           
 loadAll :: IO [()]
 loadAll = do
   (jActs, actErrs) <- findNLoadJType actionSuffix actionFolder :: IO ([JAction], [String])
   (jScripts, scriptErrs) <- findNLoadJType scriptSuffix scriptFolder :: IO ([JScript], [String])
   (jObjs, objErrs) <- findNLoadJType objectSuffix objectFolder :: IO ([JScript], [String])
-  let parseResults = parseActions (([], S.empty), ([], S.empty)) jActs ([], (([], S.empty), ([], S.empty)))
-  let (actions, ((propNames,propHash), (scriptNames,scriptHash))) = parseResults
+  let parseResults = L.mapAccumL parseAction (([], S.empty), ([], S.empty)) jActs 
+  let (((propNames,propHash), (scriptNames,scriptHash)), actions) = parseResults
   mapM print actions
   mapM print jObjs
   mapM print scriptNames
   mapM print propNames
+  mapM print actErrs
