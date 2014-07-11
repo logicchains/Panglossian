@@ -1,28 +1,16 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE PackageImports #-}
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings, RecordWildCards, NamedFieldPuns, TemplateHaskell #-}
 module Panglossian.Loader (findFilesSuffixed) where
 
 import Control.Applicative
-import Control.Monad
 import Data.Aeson
 import Data.Aeson.TH
-import qualified Data.Char as Ch
 import Data.Either
-import Data.Either.Unwrap (fromLeft, fromRight, isRight)
 import qualified Data.Set as S
 import Data.Int
 import qualified Data.List as L
 import Data.Text
-import qualified Data.Vector as V
-import qualified Data.Vector.Unboxed as U
-import Data.Ord
 import Data.Word
-import Debug.Trace
 import qualified System.FilePath.FilePather as Pather
-import System.FilePath
 import qualified Data.ByteString.Lazy as BS
 
 import Panglossian.Types as P
