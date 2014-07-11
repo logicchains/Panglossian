@@ -10,6 +10,7 @@ import Control.Monad
 import Data.Aeson
 import Data.Aeson.TH
 import qualified Data.Char as Ch
+import Data.Either
 import Data.Either.Unwrap (fromLeft, fromRight, isRight)
 import qualified Data.Set as S
 import Data.Int
@@ -76,13 +77,9 @@ findFilesSuffixed suffix folderName = Pather.findp filterPred recursePred folder
       filterPred = Pather.filterPredicate' (\x -> (L.drop (L.length x - (L.length suffix)) x) == suffix)
       recursePred = Pather.recursePredicate (\x -> True)
 
-loadJType :: FromJSON a => [String] -> IO ([a], [String])
-loadJType fileNames = do
-  acts <- (L.map fromRight) <$> fst <$> parts
-  errs <- (L.map fromLeft) <$> snd <$> parts
-  return (acts, errs)
+loadJType :: FromJSON a => [String] -> IO ([String], [a])
+loadJType fileNames = partitionEithers <$> possibleActions
     where
-      parts = fmap (L.partition isRight) possibleActions
       possibleActions = L.map toAction <$> mapM BS.readFile fileNames
       toAction = (\x -> eitherDecode x :: FromJSON a => Either String a)
 
@@ -117,14 +114,14 @@ getPropNameIndex :: NameList -> Text -> (Int, NameList)
 getPropNameIndex (registry, hash) name = if S.member name hash then (L.length registry, (registry, hash))  
                                       else (L.length registry, (registry ++ [name], S.insert name hash))
 
-findNLoadJType :: FromJSON a => String -> String -> IO ([a], [String])
+findNLoadJType :: FromJSON a => String -> String -> IO ([String], [a])
 findNLoadJType suffix folder = L.sortBy compare <$> findFilesSuffixed suffix folder >>= loadJType
           
 loadAll :: IO [()]
 loadAll = do
-  (jActs, actErrs) <- findNLoadJType actionSuffix actionFolder :: IO ([JAction], [String])
-  (jScripts, scriptErrs) <- findNLoadJType scriptSuffix scriptFolder :: IO ([JScript], [String])
-  (jObjs, objErrs) <- findNLoadJType objectSuffix objectFolder :: IO ([JScript], [String])
+  (actErrs, jActs) <- findNLoadJType actionSuffix actionFolder :: IO ([String], [JAction])
+  (scriptErrs, jScripts) <- findNLoadJType scriptSuffix scriptFolder :: IO ([String], [JScript])
+  (objErrs, jObjs) <- findNLoadJType objectSuffix objectFolder :: IO ([String], [JObject])
   let parseResults = L.mapAccumL parseAction (([], S.empty), ([], S.empty)) jActs 
   let (((propNames,propHash), (scriptNames,scriptHash)), actions) = parseResults
   mapM print actions
