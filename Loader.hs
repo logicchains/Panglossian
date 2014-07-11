@@ -9,6 +9,8 @@ import qualified Data.Set as S
 import Data.Int
 import qualified Data.List as L
 import Data.Text
+import qualified Data.Vector as V
+import qualified Data.Vector.Unboxed as U
 import Data.Word
 import qualified System.FilePath.FilePather as Pather
 import qualified Data.ByteString.Lazy as BS
@@ -117,3 +119,8 @@ loadAll = do
   mapM print scriptNames
   mapM print propNames
   mapM print actErrs
+
+finaliseAction :: IT.LAction -> P.ActionT
+finaliseAction IT.LAction{..} = P.ActionT{actName, constraints = V.fromList constraints, specials = V.fromList specials,
+                                         actorAffects = U.fromList actorAffects, targetAffects = U.fromList targetAffects,
+                                          prereqs = U.fromList prereqs, consumes = U.fromList consumes}
