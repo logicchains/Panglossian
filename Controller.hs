@@ -1,7 +1,9 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 module Panglossian.Controller (awaitConns) where
 
 import Control.Concurrent
 import Control.Concurrent.STM
+import Control.Exception
 import Control.Monad
 import Data.Int
 import Network
@@ -13,9 +15,15 @@ import qualified Panglossian.ThreadCtrl as PT
 awaitConns :: Int32 -> TChan [String] -> TChan ThreadId -> IO ()
 awaitConns port printer tids = do
   atomically $ writeTChan printer ["Listening on channel: " ++ show port]
-  sock <- listenOn $ PortNumber $ fromIntegral port
-  handleConns sock tids
-  return ()
+  lisRes <- try doListen 
+  case lisRes of
+    Left (ex :: SomeException) -> atomically $ writeTChan printer 
+                                ["Warning: couldn't listen on port: " ++ (show port) ++ " due to exception " ++ show ex]
+    Right _ -> return ()
+  where doListen = do
+          sock <- listenOn $ PortNumber $ fromIntegral port
+          handleConns sock tids
+          return ()
 
 handleConns :: Socket -> TChan ThreadId -> IO ()
 handleConns sock tids = do
