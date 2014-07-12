@@ -6,7 +6,6 @@ import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad
 import Data.Int
---import Network
 import Network.Simple.TCP
 import System.IO
 
@@ -39,17 +38,18 @@ handleConns sock tids = do
 printC :: TChan [String] -> [String] -> IO ()
 printC chan str = atomically $ writeTChan chan str
 
-awaitConns :: Int32 -> TChan [String] -> TChan ThreadId -> IO ()
-awaitConns port printer tids = do
+awaitConns :: Int32 -> TChan [String] -> TChan ThreadId -> TChan PC.Command -> IO ()
+awaitConns port printer tids cmds = do
   printC printer ["Attempting to listening on channel: " ++ show port]
   serve HostAny (show port) (\(sock, sockaddr) -> do 
     printC printer ["Accepting connection on channel: " ++ show port]                                                  
-    handleConn sock printer)
+    handleConn sock sockaddr printer cmds)
   return ()
 
-handleConn :: Socket -> TChan [String] -> IO ()
-handleConn sock printer = 
-    return ()
+handleConn :: Socket -> SockAddr ->  TChan [String] -> TChan PC.Command -> IO ()
+handleConn sock addr printer cmds = do
+  printC printer ["Handling connection from address: " ++ show addr] 
+  return ()
 
 commands = [("listen",[PC.NumToken 0]), ("exit", [])]
 
@@ -58,9 +58,9 @@ handleCommands cmdChan sprvsrChan printer tidChan  = do
   (cmd, args) <- atomically $ readTChan cmdChan
   case cmd of
     "exit" -> killAll
-    "listen" -> case (args !! 0) of
-                  PC.NumToken n -> (forkIO $ awaitConns n printer tidChan) >> continue
-                  _ -> (printC printer ["Fatal internal error: incorrect listen command"]) >> killAll
+    "listen" -> case head args of
+                  PC.NumToken n -> forkIO (awaitConns n printer tidChan cmdChan) >> continue
+                  _ -> printC printer ["Fatal internal error: incorrect listen command"] >> killAll
     _ -> continue
  where killAll = atomically $ writeTChan sprvsrChan PT.Kill
        continue = handleCommands cmdChan sprvsrChan printer tidChan

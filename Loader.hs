@@ -62,16 +62,16 @@ data JScript = JScript {
 $(deriveFromJSON defaultOptions{fieldLabelModifier =  L.drop 3} ''JScript)
 
 findFilesSuffixed :: String -> String -> IO [FilePath]
-findFilesSuffixed suffix folderName = Pather.findp filterPred recursePred folderName
+findFilesSuffixed suffix = Pather.findp filterPred recursePred
     where 
-      filterPred = Pather.filterPredicate' (\x -> (L.drop (L.length x - (L.length suffix)) x) == suffix)
-      recursePred = Pather.recursePredicate (\x -> True)
+      filterPred = Pather.filterPredicate' (\x -> L.drop (L.length x - L.length suffix) x == suffix)
+      recursePred = Pather.recursePredicate $ const True
 
 loadJType :: FromJSON a => [String] -> IO ([String], [a])
 loadJType fileNames = partitionEithers <$> possibleActions
     where
       possibleActions = L.map toAction <$> mapM BS.readFile fileNames
-      toAction = (\x -> eitherDecode x :: FromJSON a => Either String a)
+      toAction x = eitherDecode x :: FromJSON a => Either String a
 
 type NameList = ([Text], S.Set Text)
 type NamePairs = (NameList, NameList)
@@ -105,20 +105,20 @@ getPropNameIndex (registry, hash) name = if S.member name hash then (L.length re
                                       else (L.length registry, (registry ++ [name], S.insert name hash))
 
 findNLoadJType :: FromJSON a => String -> String -> IO ([String], [a])
-findNLoadJType suffix folder = L.sortBy compare <$> findFilesSuffixed suffix folder >>= loadJType
+findNLoadJType suffix folder = L.sort <$> findFilesSuffixed suffix folder >>= loadJType
           
-loadAll :: IO [()]
+loadAll :: IO ()
 loadAll = do
   (actErrs, jActs) <- findNLoadJType actionSuffix actionFolder :: IO ([String], [JAction])
   (scriptErrs, jScripts) <- findNLoadJType scriptSuffix scriptFolder :: IO ([String], [JScript])
   (objErrs, jObjs) <- findNLoadJType objectSuffix objectFolder :: IO ([String], [JObject])
   let parseResults = L.mapAccumL parseAction (([], S.empty), ([], S.empty)) jActs 
   let (((propNames,propHash), (scriptNames,scriptHash)), actions) = parseResults
-  mapM print actions
-  mapM print jObjs
-  mapM print scriptNames
-  mapM print propNames
-  mapM print actErrs
+  mapM_ print actions
+  mapM_ print jObjs
+  mapM_ print scriptNames
+  mapM_ print propNames
+  mapM_ print actErrs
 
 finaliseAction :: IT.LAction -> P.ActionT
 finaliseAction IT.LAction{..} = P.ActionT{actName, constraints = V.fromList constraints, specials = V.fromList specials,

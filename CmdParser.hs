@@ -20,14 +20,16 @@ parseInt str = case (reads str :: [(Int32, String)]) of
 
 expectToken :: Token -> String -> Either String Token
 expectToken (StrToken _) str = Right $ StrToken str
-expectToken (NumToken _) str = case (parseInt str) of
+expectToken (NumToken _) str = case parseInt str of
                                   Just n -> Right $ NumToken n
                                   Nothing -> Left ("Error: "++str++" is not an integer.")
 
 expectTokens :: [Token] -> [String] -> Either [String] [Token]
-expectTokens expected actual = if L.length expected /= L.length actual then 
-                                   Left ["Error: expected " ++ show (L.length expected) ++ " arguments"] else
-                                   if null errs then Right toks else Left errs
+expectTokens expected actual
+    | L.length expected /= L.length actual =
+        Left ["Error: expected " ++ show (L.length expected) ++ " arguments"]
+    | null errs = Right toks
+    | otherwise = Left errs
     where (errs, toks) = partitionEithers $ zipWith expectToken expected actual
 
 sendCommand :: Command -> TChan Command -> IO()
@@ -36,7 +38,7 @@ sendCommand cmd chan = atomically $ writeTChan chan cmd
 parseCommand :: [String] -> [Command] -> Either [String] Command
 parseCommand [] _ = Left ["Error: no command entered\n"]
 parseCommand (x:xs) commands = case command of
-                        Just (str, toks) -> case (expectTokens toks xs) of
+                        Just (str, toks) -> case expectTokens toks xs of
                                    Left errs -> Left (errs ++ ["in command " ++ x])
                                    Right toks -> Right (x, toks)
                         Nothing -> Left ["Error: invalid command: " ++ x]
@@ -54,5 +56,5 @@ awaitCommands handle options cmdChan errChan = do
 runPrinter :: Handle -> TChan [String] -> IO()
 runPrinter h chan = do
   errs <- atomically $ readTChan chan
-  mapM (hPutStrLn h) errs
+  mapM_ (hPutStrLn h) errs
   runPrinter h chan
