@@ -1,16 +1,17 @@
-module Panglossian.CmdParser (parseCommand) where
+module Panglossian.CmdParser (awaitCommands, runPrinter, Command, Token(..)) where
 
 import Control.Concurrent.STM
+import Data.Functor
 import Data.Either
-import Data.List
+import qualified Data.List as L
 import Data.Int
+import Data.Word
+import System.IO
 
 data Token = NumToken Int32 | StrToken String
            deriving Show
 
 type Command = (String, [Token])
-
-commands = ["listen"]
 
 parseInt :: String -> Maybe Int32
 parseInt str = case (reads str :: [(Int32, String)]) of
@@ -21,14 +22,37 @@ expectToken :: Token -> String -> Either String Token
 expectToken (StrToken _) str = Right $ StrToken str
 expectToken (NumToken _) str = case (parseInt str) of
                                   Just n -> Right $ NumToken n
-                                  Nothing -> Left ("Error: "++str++" is not an int.")
+                                  Nothing -> Left ("Error: "++str++" is not an integer.")
 
-expectTokens :: [Token] -> [String] -> ([String], [Token])
-expectTokens expected actual = partitionEithers $ zipWith expectToken expected actual
+expectTokens :: [Token] -> [String] -> Either [String] [Token]
+expectTokens expected actual = if L.length expected /= L.length actual then 
+                                   Left ["Error: expected " ++ show (L.length expected) ++ " arguments"] else
+                                   if null errs then Right toks else Left errs
+    where (errs, toks) = partitionEithers $ zipWith expectToken expected actual
 
 sendCommand :: Command -> TChan Command -> IO()
 sendCommand cmd chan = atomically $ writeTChan chan cmd
 
-parseCommand :: [String] -> Either String Command
-parseCommand [] = Left "Error: no command entered\n" 
-parseCommand [x] = if elem x commands then Right (x, []) else Left ("Error: invalid command: " ++ x)
+parseCommand :: [String] -> [Command] -> Either [String] Command
+parseCommand [] _ = Left ["Error: no command entered\n"]
+parseCommand (x:xs) commands = case command of
+                        Just (str, toks) -> case (expectTokens toks xs) of
+                                   Left errs -> Left (errs ++ ["in command " ++ x])
+                                   Right toks -> Right (x, toks)
+                        Nothing -> Left ["Error: invalid command: " ++ x]
+    where command = L.find (\(cmd,_) -> cmd == x ) commands
+
+awaitCommands :: Handle -> [Command] -> TChan Command -> TChan [String] -> IO()
+awaitCommands handle options cmdChan errChan = do
+  input <- words <$> hGetLine handle
+  let res = parseCommand input options
+  case res of
+    Left err -> atomically $ writeTChan errChan err
+    Right cmd -> atomically $ writeTChan cmdChan cmd
+  awaitCommands handle options cmdChan errChan
+
+runPrinter :: Handle -> TChan [String] -> IO()
+runPrinter h chan = do
+  errs <- atomically $ readTChan chan
+  mapM (hPutStrLn h) errs
+  runPrinter h chan
