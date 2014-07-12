@@ -7,6 +7,10 @@ data Command = Kill
 
 watchThreads :: [ThreadId] -> TChan ThreadId -> TChan Command -> IO()
 watchThreads tids tidChan cChan = do
+  atomically (do
+               noTid <- isEmptyTChan tidChan 
+               noCmd <- isEmptyTChan cChan
+               if noTid == True && noCmd == True then retry else return ())
   noTid <- atomically $ isEmptyTChan tidChan 
   noCmd <- atomically $ isEmptyTChan cChan
   if not noTid then do
@@ -18,8 +22,3 @@ watchThreads tids tidChan cChan = do
         Kill -> mapM killThread tids >> return ()
         _ -> watchThreads tids tidChan cChan
   else watchThreads tids tidChan cChan
-
-
---  case cmd of
---    "exit" -> killThread
---    _ -> handleCommands chan
