@@ -1,11 +1,15 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module Panglossian.Controller (awaitConns) where
 
+import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad
 import Data.Int
+import Data.Maybe
+import Data.Word
+import Data.Serialize
 import Network.Simple.TCP
 import System.IO
 
@@ -35,44 +39,87 @@ handleConns sock tids = do
   handleConns sock tids
 
 -}
+
+data Command = WantRegionID Word32 | GiveRegionID Word32
+
 printC :: TChan [String] -> [String] -> IO ()
 printC chan str = atomically $ writeTChan chan str
 
-awaitConns :: Int32 -> TChan [String] -> TChan ThreadId -> TChan PC.Command -> IO ()
+awaitAny :: [TChan a] -> IO ()
+awaitAny chans = atomically $ do
+  fullChans <- catMaybes <$> mapM checkFull chans
+  unless (null fullChans) retry
+
+manageCons :: [TChan Command] -> TChan (TChan Command) -> TChan Command -> TChan [String] -> IO ()
+manageCons cons conChan cmdChan printer = do
+  atomically (do
+              regionRequests <- catMaybes <$> mapM checkFull cons
+              newCmd <- isEmptyTChan cmdChan
+              newChan <- isEmptyTChan conChan
+              when (null regionRequests && not newCmd && not newChan) retry)
+  regionRequests <- fmap catMaybes . atomically $ mapM checkFull cons
+  newCmd <- atomically $ isEmptyTChan cmdChan
+  newChan <- atomically $ isEmptyTChan conChan
+  when newCmd $ atomically (writeTChan printer ["Error: unhandled internal command"]) >> manageCons cons conChan cmdChan printer
+  unless (null regionRequests) . atomically $ (catMaybes <$> mapM handleRegionRequest regionRequests) >>= 
+             mapM_ (writeTChan cmdChan)
+  if newChan then atomically (readTChan conChan) >>= (\x -> manageCons (x : cons) conChan cmdChan printer) 
+  else manageCons cons conChan cmdChan printer
+
+checkFull :: TChan a -> STM (Maybe (TChan a))
+checkFull chan = do
+  empty <- isEmptyTChan chan
+  return (if empty then Nothing else Just chan)
+
+handleRegionRequest :: TChan Command -> STM(Maybe Command)
+handleRegionRequest chan = do
+  request <- readTChan chan
+  case request of
+    _ -> return Nothing
+  handleRegionRequest chan
+
+awaitConns :: Int32 -> TChan [String] -> TChan ThreadId -> TChan (TChan Command) -> IO ()
 awaitConns port printer tids cmds = do
   printC printer ["Attempting to listening on channel: " ++ show port]
   serve HostAny (show port) (\(sock, sockaddr) -> do 
     printC printer ["Accepting connection on channel: " ++ show port]                                                  
-    handleConn sock sockaddr printer cmds)
+    newCmdChan <- newTChanIO
+    atomically $ writeTChan cmds newCmdChan
+    handleConn sock sockaddr printer newCmdChan)
   return ()
 
-handleConn :: Socket -> SockAddr ->  TChan [String] -> TChan PC.Command -> IO ()
+handleConn :: Socket -> SockAddr ->  TChan [String] -> TChan Command -> IO ()
 handleConn sock addr printer cmds = do
-  printC printer ["Handling connection from address: " ++ show addr] 
+  printC printer ["Handling connection from address: " ++ show addr]
+  send sock $ encode (1 :: Word32)
   return ()
 
 commands = [("listen",[PC.NumToken 0]), ("exit", [])]
 
-handleCommands :: TChan PC.Command -> TChan PT.Command -> TChan [String] -> TChan ThreadId -> IO()
-handleCommands cmdChan sprvsrChan printer tidChan  = do
-  (cmd, args) <- atomically $ readTChan cmdChan
+handleCommands :: TChan PC.Command -> TChan PT.Command -> TChan [String] -> TChan ThreadId -> TChan (TChan Command) ->
+               TChan Command-> IO()
+handleCommands parsedCmdChan sprvsrChan printer tidChan regionsChanChan regionMgrCmdChan   = do
+  (cmd, args) <- atomically $ readTChan parsedCmdChan
   case cmd of
     "exit" -> killAll
     "listen" -> case head args of
-                  PC.NumToken n -> forkIO (awaitConns n printer tidChan cmdChan) >> continue
+                  PC.NumToken n -> forkIO (awaitConns n printer tidChan regionsChanChan) >> continue
                   _ -> printC printer ["Fatal internal error: incorrect listen command"] >> killAll
     _ -> continue
  where killAll = atomically $ writeTChan sprvsrChan PT.Kill
-       continue = handleCommands cmdChan sprvsrChan printer tidChan
+       continue = handleCommands parsedCmdChan sprvsrChan printer tidChan regionsChanChan regionMgrCmdChan
 
 runController :: IO ()
 runController = do
   printChan <- newTChanIO
-  cmdChan <- newTChanIO
+  parsedCmdChan <- newTChanIO
   supervisorTidChan <- newTChanIO
   supervisorCmdChan <- newTChanIO
+  regionsChanChan <- newTChanIO
+  regionMgrCmdChan <- newTChanIO
   printerID <- forkIO $ PC.runPrinter stdout printChan
-  cmdHndlrID <- forkIO $ PC.awaitCommands stdin commands cmdChan printChan
+  cmdHndlrID <- forkIO $ PC.awaitCommands stdin commands parsedCmdChan printChan
   supervisorId <- forkIO $ PT.watchThreads [] supervisorTidChan supervisorCmdChan
+  conManagerId <- forkIO  $ manageCons []regionsChanChan regionMgrCmdChan printChan
   atomically $ mapM (writeTChan supervisorTidChan) [supervisorId, printerID, cmdHndlrID] -- Supervisor must be sent first
-  handleCommands cmdChan supervisorCmdChan printChan supervisorTidChan
+  handleCommands parsedCmdChan supervisorCmdChan printChan supervisorTidChan regionsChanChan regionMgrCmdChan
