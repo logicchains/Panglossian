@@ -40,7 +40,11 @@ handleConns sock tids = do
 
 -}
 
-data Command = WantRegionID Word32 | GiveRegionID Word32
+data Command = WantRegionID (TChan Command) | GiveRegionID Word32
+             deriving Show
+
+instance Show (TChan a) where
+    show a = ("TChan "++show a++" ")
 
 printC :: TChan [String] -> [String] -> IO ()
 printC chan str = atomically $ writeTChan chan str
@@ -60,7 +64,11 @@ manageCons cons conChan cmdChan printer = do
   regionRequests <- fmap catMaybes . atomically $ mapM checkFull cons
   newCmd <- atomically $ isEmptyTChan cmdChan
   newChan <- atomically $ isEmptyTChan conChan
-  when newCmd $ atomically (writeTChan printer ["Error: unhandled internal command"]) >> manageCons cons conChan cmdChan printer
+  when newCmd $ atomically (readTChan cmdChan) >>= 
+           (\x -> case x of
+                    WantRegionID chan -> atomically $ writeTChan chan $ GiveRegionID 1
+                    _ -> return ()
+           )
   unless (null regionRequests) . atomically $ (catMaybes <$> mapM handleRegionRequest regionRequests) >>= 
              mapM_ (writeTChan cmdChan)
   if newChan then atomically (readTChan conChan) >>= (\x -> manageCons (x : cons) conChan cmdChan printer) 
@@ -75,8 +83,8 @@ handleRegionRequest :: TChan Command -> STM(Maybe Command)
 handleRegionRequest chan = do
   request <- readTChan chan
   case request of
+    WantRegionID c -> return . Just $ WantRegionID c
     _ -> return Nothing
-  handleRegionRequest chan
 
 awaitConns :: Int32 -> TChan [String] -> TChan ThreadId -> TChan (TChan Command) -> IO ()
 awaitConns port printer tids cmds = do
@@ -91,8 +99,12 @@ awaitConns port printer tids cmds = do
 handleConn :: Socket -> SockAddr ->  TChan [String] -> TChan Command -> IO ()
 handleConn sock addr printer cmds = do
   printC printer ["Handling connection from address: " ++ show addr]
-  send sock $ encode (1 :: Word32)
-  return ()
+  atomically $ writeTChan cmds $ WantRegionID cmds
+  regionID <- atomically $ readTChan cmds
+  case regionID of
+    GiveRegionID n -> (send sock $ encode n) >> recv sock 4 >> return ()
+    a -> printC printer ["Serious internal error: region connection requested region ID but received" ++ (show a)]
+        where continue =  handleConn sock addr printer cmds
 
 commands = [("listen",[PC.NumToken 0]), ("exit", [])]
 
