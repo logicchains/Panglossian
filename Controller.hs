@@ -44,7 +44,7 @@ data Command = WantRegionID (TChan Command) | GiveRegionID Word32
              deriving Show
 
 instance Show (TChan a) where
-    show a = ("TChan "++show a++" ")
+    show a = "TChan "++show a++" "
 
 printC :: TChan [String] -> [String] -> IO ()
 printC chan str = atomically $ writeTChan chan str
@@ -84,7 +84,7 @@ handleRegionRequest chan = do
   request <- readTChan chan
   case request of
     WantRegionID c -> return . Just $ WantRegionID c
-    _ -> return Nothing
+    a -> unGetTChan chan a >> return Nothing
 
 awaitConns :: Int32 -> TChan [String] -> TChan ThreadId -> TChan (TChan Command) -> IO ()
 awaitConns port printer tids cmds = do
@@ -100,14 +100,21 @@ handleConn :: Socket -> SockAddr ->  TChan [String] -> TChan Command -> IO ()
 handleConn sock addr printer cmds = do
   printC printer ["Handling connection from address: " ++ show addr]
   atomically $ writeTChan cmds $ WantRegionID cmds
-  regionID <- atomically $ readTChan cmds
-  case regionID of
-    GiveRegionID n -> (send sock $ encode n) >> recv sock 4 >> return ()
-    a -> printC printer ["Serious internal error: region connection requested region ID but received" ++ (show a)]
-        where continue =  handleConn sock addr printer cmds
+  atomically (readTChan cmds >>= (\x -> case x of
+                                             GiveRegionID n -> return n
+                                             a -> retry)) >>=
+                                    (send sock . encode)>> recv sock 4 >>= tryDecode
+  where tryDecode s = case s of
+                        Nothing -> printC printer ["Error receiving ID from region: " ++ show addr]
+                        Just n -> case decode n of
+                                    Left err -> printC printer ["Error decoding ID from region: " ++ show addr ++ "error was" ++ err]
+                                    Right n -> handleRegion sock addr printer cmds n
+
+handleRegion :: Socket -> SockAddr -> TChan [String] -> TChan Command -> Word32 -> IO ()
+handleRegion sock addr printer cmds id =
+  handleRegion sock addr printer cmds id
 
 commands = [("listen",[PC.NumToken 0]), ("exit", [])]
-
 handleCommands :: TChan PC.Command -> TChan PT.Command -> TChan [String] -> TChan ThreadId -> TChan (TChan Command) ->
                TChan Command-> IO()
 handleCommands parsedCmdChan sprvsrChan printer tidChan regionsChanChan regionMgrCmdChan   = do
