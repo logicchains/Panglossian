@@ -58,21 +58,22 @@ manageCons :: [TChan Command] -> TChan (TChan Command) -> TChan Command -> TChan
 manageCons cons conChan cmdChan printer = do
   atomically (do
               regionRequests <- catMaybes <$> mapM checkFull cons
-              newCmd <- isEmptyTChan cmdChan
-              newChan <- isEmptyTChan conChan
-              when (null regionRequests && not newCmd && not newChan) retry)
+              noCmd <- isEmptyTChan cmdChan
+              noNewChan <- isEmptyTChan conChan
+              when (null regionRequests && noCmd && noNewChan) retry)
   regionRequests <- fmap catMaybes . atomically $ mapM checkFull cons
-  newCmd <- atomically $ isEmptyTChan cmdChan
-  newChan <- atomically $ isEmptyTChan conChan
-  when newCmd $ atomically (readTChan cmdChan) >>= 
-           (\x -> case x of
-                    WantRegionID chan -> atomically $ writeTChan chan $ GiveRegionID 1
-                    _ -> return ()
-           )
+  newCmd <- atomically $ tryReadTChan cmdChan
+  newChan <- atomically $ tryReadTChan conChan
+  case newCmd of 
+    Nothing -> return ()
+    Just cmd -> case cmd of
+                  WantRegionID chan -> atomically $ writeTChan chan $ GiveRegionID 1
+                  _ -> return ()
   unless (null regionRequests) . atomically $ (catMaybes <$> mapM handleRegionRequest regionRequests) >>= 
              mapM_ (writeTChan cmdChan)
-  if newChan then atomically (readTChan conChan) >>= (\x -> manageCons (x : cons) conChan cmdChan printer) 
-  else manageCons cons conChan cmdChan printer
+  case newChan of
+    Nothing -> manageCons cons conChan cmdChan printer
+    Just chan -> atomically (readTChan conChan) >>= (\x -> manageCons (x : cons) conChan cmdChan printer) 
 
 checkFull :: TChan a -> STM (Maybe (TChan a))
 checkFull chan = do
@@ -86,18 +87,20 @@ handleRegionRequest chan = do
     WantRegionID c -> return . Just $ WantRegionID c
     a -> unGetTChan chan a >> return Nothing
 
-awaitConns :: Int32 -> TChan [String] -> TChan ThreadId -> TChan (TChan Command) -> IO ()
+awaitConns :: Int32 -> TChan [String] -> TChan PT.TID -> TChan (TChan Command) -> IO ()
 awaitConns port printer tids cmds = do
   printC printer ["Attempting to listening on channel: " ++ show port]
+  myId <- myThreadId
+  atomically $ writeTChan tids ("Listener on port "++show port++"",myId)
   serve HostAny (show port) (\(sock, sockaddr) -> do 
     printC printer ["Accepting connection on channel: " ++ show port]                                                  
     newCmdChan <- newTChanIO
     atomically $ writeTChan cmds newCmdChan
-    handleConn sock sockaddr printer newCmdChan)
+    handleConn sock sockaddr printer newCmdChan tids)
   return ()
 
-handleConn :: Socket -> SockAddr ->  TChan [String] -> TChan Command -> IO ()
-handleConn sock addr printer cmds = do
+handleConn :: Socket -> SockAddr ->  TChan [String] -> TChan Command -> TChan PT.TID -> IO ()
+handleConn sock addr printer cmds tids = do
   printC printer ["Handling connection from address: " ++ show addr]
   atomically $ writeTChan cmds $ WantRegionID cmds
   atomically (readTChan cmds >>= (\x -> case x of
@@ -108,14 +111,16 @@ handleConn sock addr printer cmds = do
                         Nothing -> printC printer ["Error receiving ID from region: " ++ show addr]
                         Just n -> case decode n of
                                     Left err -> printC printer ["Error decoding ID from region: " ++ show addr ++ "error was" ++ err]
-                                    Right n -> handleRegion sock addr printer cmds n
+                                    Right n -> myThreadId >>= (\x -> atomically $ writeTChan tids ("Region "++show n++" host",x)) >> 
+                                                           handleRegion sock addr printer cmds n
 
 handleRegion :: Socket -> SockAddr -> TChan [String] -> TChan Command -> Word32 -> IO ()
 handleRegion sock addr printer cmds id =
   handleRegion sock addr printer cmds id
 
-commands = [("listen",[PC.NumToken 0]), ("exit", [])]
-handleCommands :: TChan PC.Command -> TChan PT.Command -> TChan [String] -> TChan ThreadId -> TChan (TChan Command) ->
+commands = [("listen",[PC.NumToken 0]), ("exit", []), ("showThreads", [])]
+
+handleCommands :: TChan PC.Command -> TChan PT.Command -> TChan [String] -> TChan PT.TID -> TChan (TChan Command) ->
                TChan Command-> IO()
 handleCommands parsedCmdChan sprvsrChan printer tidChan regionsChanChan regionMgrCmdChan   = do
   (cmd, args) <- atomically $ readTChan parsedCmdChan
@@ -124,6 +129,7 @@ handleCommands parsedCmdChan sprvsrChan printer tidChan regionsChanChan regionMg
     "listen" -> case head args of
                   PC.NumToken n -> forkIO (awaitConns n printer tidChan regionsChanChan) >> continue
                   _ -> printC printer ["Fatal internal error: incorrect listen command"] >> killAll
+    "showThreads" -> (atomically $ writeTChan sprvsrChan PT.PrintAll) >> continue
     _ -> continue
  where killAll = atomically $ writeTChan sprvsrChan PT.Kill
        continue = handleCommands parsedCmdChan sprvsrChan printer tidChan regionsChanChan regionMgrCmdChan
@@ -137,8 +143,12 @@ runController = do
   regionsChanChan <- newTChanIO
   regionMgrCmdChan <- newTChanIO
   printerID <- forkIO $ PC.runPrinter stdout printChan
-  cmdHndlrID <- forkIO $ PC.awaitCommands stdin commands parsedCmdChan printChan
-  supervisorId <- forkIO $ PT.watchThreads [] supervisorTidChan supervisorCmdChan
+  cmdProcessorID <- forkIO $ PC.awaitCommands stdin commands parsedCmdChan printChan
+  supervisorId <- forkIO $ PT.watchThreads [] supervisorTidChan supervisorCmdChan printChan
   conManagerId <- forkIO  $ manageCons []regionsChanChan regionMgrCmdChan printChan
-  atomically $ mapM (writeTChan supervisorTidChan) [supervisorId, printerID, cmdHndlrID] -- Supervisor must be sent first
+  cmdHandlerId <- myThreadId                  
+  -- Supervisor must be sent first
+  atomically $ mapM_ (writeTChan supervisorTidChan) [("Thread supervisor", supervisorId), ("Printer", printerID),
+                    ("Input command processor", cmdProcessorID), ("Connection manager", conManagerId),
+                    ("Command handler", cmdHandlerId)]
   handleCommands parsedCmdChan supervisorCmdChan printChan supervisorTidChan regionsChanChan regionMgrCmdChan
