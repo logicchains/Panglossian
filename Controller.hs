@@ -129,7 +129,7 @@ handleCommands parsedCmdChan sprvsrChan printer tidChan regionsChanChan regionMg
     "listen" -> case head args of
                   PC.NumToken n -> forkIO (awaitConns n printer tidChan regionsChanChan) >> continue
                   _ -> printC printer ["Fatal internal error: incorrect listen command"] >> killAll
-    "showThreads" -> (atomically $ writeTChan sprvsrChan PT.PrintAll) >> continue
+    "showThreads" -> atomically (writeTChan sprvsrChan PT.PrintAll) >> continue
     _ -> continue
  where killAll = atomically $ writeTChan sprvsrChan PT.Kill
        continue = handleCommands parsedCmdChan sprvsrChan printer tidChan regionsChanChan regionMgrCmdChan

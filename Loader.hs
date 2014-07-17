@@ -8,6 +8,7 @@ import Data.Either
 import qualified Data.Set as S
 import Data.Int
 import qualified Data.List as L
+import qualified Data.Map as M
 import Data.Text
 import qualified Data.Vector as V
 import qualified Data.Vector.Unboxed as U
@@ -17,6 +18,8 @@ import qualified Data.ByteString.Lazy as BS
 
 import Panglossian.Types as P
 import Panglossian.IntermediateTypes as IT
+
+import Debug.Trace
 
 actionSuffix = "_A.json"
 actionFolder = "./Panglossian"
@@ -73,36 +76,37 @@ loadJType fileNames = partitionEithers <$> possibleActions
       possibleActions = L.map toAction <$> mapM BS.readFile fileNames
       toAction x = eitherDecode x :: FromJSON a => Either String a
 
-type NameList = ([Text], S.Set Text)
-type NamePairs = (NameList, NameList)
+compileJObj :: M.Map Text Word32 -> JObject -> (Text, [P.Property])
+compileJObj propIds JObject {..} = (objname, L.map (compileProp propIds) objproperties)
 
-parseAction :: NamePairs -> JAction ->  (NamePairs, IT.LAction)
-parseAction (propNames, scriptNames) JAction {..} = ((newPNames4, newSNames2), IT.LAction {actName=actname, 
-                           constraints=newConstraints,specials=newSpecials, actorAffects=newAAffects, 
-                           targetAffects=newTAffects, prereqs=newPrereqs, consumes=newConsumes})
+compileJAct :: M.Map Text Word32 -> M.Map Text Word32  -> JAction -> IT.LAction
+compileJAct propIds scriptIds JAction {..} = 
+    IT.LAction actname (L.map (scriptIds M.!) actconstraints) (L.map (scriptIds M.!) actspecials) 
+      newAAffects newTAffects newPrereqs newConsumes
     where 
-      (newPNames, newPrereqs) = L.mapAccumL parseProperty propNames actprereqs
-      (newPNames2, newConsumes) = L.mapAccumL parseProperty newPNames actconsumes
-      (newPNames3, newAAffects) = L.mapAccumL parseModifier newPNames2 actactorAffects
-      (newPNames4,newTAffects) = L.mapAccumL parseModifier newPNames3 acttargetAffects
-      (newSNames, newConstraints) = L.mapAccumL parseScriptName scriptNames actconstraints
-      (newSNames2, newSpecials) = L.mapAccumL parseScriptName newSNames actspecials
+          newPrereqs = L.map (compileProp propIds) actprereqs
+          newConsumes = L.map (compileProp propIds) actconsumes
+          newAAffects = L.map (compileMod propIds) actactorAffects
+          newTAffects = L.map (compileMod propIds) acttargetAffects
+          
+compileMod :: M.Map Text Word32 -> JModifier -> P.Modifier
+compileMod ids JModifier{..} = P.Modifier (ids M.! modifiedBy) exponent multiplier
 
-parseScriptName :: NameList -> Text -> (NameList, P.Script)
-parseScriptName names name  = (newNames, fromIntegral index)
-    where (index, newNames) =  getPropNameIndex names name
+compileProp :: M.Map Text Word32 -> JProperty -> P.Property
+compileProp ids JProperty{..} = P.Property (ids M.! property) value
 
-parseModifier :: NameList -> JModifier -> (NameList, P.Modifier)
-parseModifier names JModifier{..}  = (newNames, P.Modifier {modifiesProp = fromIntegral index, exponent, multiplier})
-    where (index, newNames) =  getPropNameIndex names modifiedBy
+getObjProps :: JObject -> S.Set Text
+getObjProps jObj = getPropNames (objproperties jObj) property
 
-parseProperty :: NameList -> JProperty -> (NameList, P.Property)
-parseProperty names JProperty{..}  = (newNames, P.Property {propertyID = fromIntegral index, value})
-    where (index, newNames) =  getPropNameIndex names property
+getActProps :: JAction -> S.Set Text
+getActProps JAction{..} = S.union (getPropNames (actprereqs ++ actconsumes) property)
+                                  (getPropNames (actactorAffects ++ acttargetAffects) Panglossian.Loader.modifiedBy)
 
-getPropNameIndex :: NameList -> Text -> (Int, NameList)
-getPropNameIndex (registry, hash) name = if S.member name hash then (L.length registry, (registry, hash))  
-                                      else (L.length registry, (registry ++ [name], S.insert name hash))
+getPropNames :: [a] -> (a -> Text) -> S.Set Text
+getPropNames jList accessor = S.fromList (L.map accessor jList)
+
+makeIndices :: S.Set Text -> M.Map Text Word32
+makeIndices set = M.fromAscList (L.zip (S.toAscList set) [0.. fromIntegral $ S.size set]) 
 
 findNLoadJType :: FromJSON a => String -> String -> IO ([String], [a])
 findNLoadJType suffix folder = L.sort <$> findFilesSuffixed suffix folder >>= loadJType
@@ -112,13 +116,12 @@ loadAll = do
   (actErrs, jActs) <- findNLoadJType actionSuffix actionFolder :: IO ([String], [JAction])
   (scriptErrs, jScripts) <- findNLoadJType scriptSuffix scriptFolder :: IO ([String], [JScript])
   (objErrs, jObjs) <- findNLoadJType objectSuffix objectFolder :: IO ([String], [JObject])
-  let parseResults = L.mapAccumL parseAction (([], S.empty), ([], S.empty)) jActs 
-  let (((propNames,propHash), (scriptNames,scriptHash)), actions) = parseResults
-  mapM_ print actions
-  mapM_ print jObjs
-  mapM_ print scriptNames
-  mapM_ print propNames
-  mapM_ print actErrs
+  let scriptIndices = makeIndices $ getPropNames jScripts scrname
+  let propIndices = makeIndices . S.unions $ L.map getActProps jActs ++ L.map getObjProps jObjs
+  let actions = L.map (compileJAct propIndices scriptIndices) jActs
+  let objects = L.map (compileJObj propIndices) jObjs
+  mapM_ print objects
+  print $ show propIndices
 
 finaliseAction :: IT.LAction -> P.ActionT
 finaliseAction IT.LAction{..} = P.ActionT{actName, constraints = V.fromList constraints, specials = V.fromList specials,

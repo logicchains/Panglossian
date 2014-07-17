@@ -13,15 +13,15 @@ import Data.Word
 import Prelude hiding (exponent)
 
 data Modifier =  Modifier {
-	modifiesProp :: Word32,
+	modifiedBy :: Word32,
 	exponent :: Word8,
 	multiplier :: Word32
     } deriving Show
 
 DU.derivingUnbox "Modifier"
  [t| Modifier -> (Word32, Word8, Word32)|]
- [| \Modifier{modifiesProp,exponent,multiplier} -> (modifiesProp,exponent,multiplier)|]
- [| \(modifiesProp,exponent,multiplier) -> Modifier{modifiesProp,exponent,multiplier}|]
+ [| \Modifier{modifiedBy,exponent,multiplier} -> (modifiedBy,exponent,multiplier)|]
+ [| \(modifiedBy,exponent,multiplier) -> Modifier{modifiedBy,exponent,multiplier}|]
 
 data Property = Property {
 	propertyID :: Word32,
