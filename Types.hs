@@ -2,7 +2,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
-module Panglossian.Types (ActionT(..), Property(..), Modifier(..), Script(..)) where
+module Panglossian.Types (ActionT(..), Property(..), Modifier(..), Script(..), Action(..)) where
 
 import Data.Int
 import Data.Text
@@ -42,10 +42,18 @@ data ActionT = ActionT {
       actorAffects :: U.Vector Modifier,
       targetAffects :: U.Vector Modifier,
       prereqs :: U.Vector Property,
-      consumes :: U.Vector Property
+      consumes :: U.Vector Property,
+      apCost :: Word16,
+      divisible :: Bool
     } deriving Show
 
 data Object = Object {
-      objID :: Word32,
+      objID :: Word64,
       properties :: U.Vector Property
+    } deriving Show
+
+data Action = Action {
+      actor :: Word64,
+      actionType :: Word32,
+      target :: U.Vector Word64      
     } deriving Show

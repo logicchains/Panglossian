@@ -5,9 +5,13 @@ import Control.Concurrent.STM
 import System.IO
 
 import qualified Panglossian.CmdParser as PC
-import qualified Panglossian.ThreadCtrl as PT
+import qualified Panglossian.ThreadCtrl as PTC
+import qualified Panglossian.Types as PT
 
 commands = [("listen",[PC.NumToken 0]), ("exit", [])]
+
+verifyActions :: [PT.Action] -> [PT.Action]
+verifyActions a = a
 
 runRegion :: IO()
 runRegion = do
@@ -19,7 +23,7 @@ runRegion = do
   clientMgrCmdChan <- newTChanIO
   printerID <- forkIO $ PC.runPrinter stdout printChan
   cmdProcessorID <- forkIO $ PC.awaitCommands stdin commands parsedCmdChan printChan
-  supervisorId <- forkIO $ PT.watchThreads [] supervisorTidChan supervisorCmdChan printChan
+  supervisorId <- forkIO $ PTC.watchThreads [] supervisorTidChan supervisorCmdChan printChan
 --  clientManagerId <- forkIO  $ manageClients []clientChanChan clientMgrCmdChan printChan
   cmdHandlerId <- myThreadId
   -- Supervisor must be sent first

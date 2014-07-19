@@ -48,7 +48,9 @@ data JAction = JAction {
       actactorAffects :: [JModifier],
       acttargetAffects :: [JModifier],
       actprereqs :: [JProperty],
-      actconsumes :: [JProperty]
+      actconsumes :: [JProperty],
+      actapCost :: Word16,
+      actdivisible :: Bool
     } deriving Show
 $(deriveFromJSON defaultOptions{fieldLabelModifier =  L.drop 3} ''JAction)
 
@@ -75,6 +77,7 @@ loadJType fileNames = partitionEithers <$> possibleActions
     where
       possibleActions = L.map toAction <$> mapM BS.readFile fileNames
       toAction x = eitherDecode x :: FromJSON a => Either String a
+--      parseFile fName = BS.readFile fName
 
 compileJObj :: M.Map Text Word32 -> JObject -> (Text, [P.Property])
 compileJObj propIds JObject {..} = (objname, L.map (compileProp propIds) objproperties)
@@ -82,7 +85,7 @@ compileJObj propIds JObject {..} = (objname, L.map (compileProp propIds) objprop
 compileJAct :: M.Map Text Word32 -> M.Map Text Word32  -> JAction -> IT.LAction
 compileJAct propIds scriptIds JAction {..} = 
     IT.LAction actname (L.map (scriptIds M.!) actconstraints) (L.map (scriptIds M.!) actspecials) 
-      newAAffects newTAffects newPrereqs newConsumes
+      newAAffects newTAffects newPrereqs newConsumes actapCost actdivisible
     where 
           newPrereqs = L.map (compileProp propIds) actprereqs
           newConsumes = L.map (compileProp propIds) actconsumes
@@ -120,10 +123,10 @@ loadAll = do
   let propIndices = makeIndices . S.unions $ L.map getActProps jActs ++ L.map getObjProps jObjs
   let actions = L.map (compileJAct propIndices scriptIndices) jActs
   let objects = L.map (compileJObj propIndices) jObjs
-  mapM_ print objects
+  mapM_ print [actErrs, scriptErrs, objErrs]
   print $ show propIndices
 
 finaliseAction :: IT.LAction -> P.ActionT
 finaliseAction IT.LAction{..} = P.ActionT{actName, constraints = V.fromList constraints, specials = V.fromList specials,
                                          actorAffects = U.fromList actorAffects, targetAffects = U.fromList targetAffects,
-                                          prereqs = U.fromList prereqs, consumes = U.fromList consumes}
+                                          prereqs = U.fromList prereqs, consumes = U.fromList consumes, ..}
