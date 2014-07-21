@@ -21,7 +21,7 @@
 	{"property": "deliciousness", "value": 10},
 	{"property": "healthiness", "value": 20},
 	{"property": "health", "value": -1}
-    ]
+    ],
     "apCost": 10,
-    "divisible": 1
+    "divisible": false
 }

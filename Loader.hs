@@ -5,6 +5,7 @@ import Control.Applicative
 import Data.Aeson
 import Data.Aeson.TH
 import Data.Either
+import Data.Either.Unwrap (mapLeft)
 import qualified Data.Set as S
 import Data.Int
 import qualified Data.List as L
@@ -73,11 +74,10 @@ findFilesSuffixed suffix = Pather.findp filterPred recursePred
       recursePred = Pather.recursePredicate $ const True
 
 loadJType :: FromJSON a => [String] -> IO ([String], [a])
-loadJType fileNames = partitionEithers <$> possibleActions
-    where
-      possibleActions = L.map toAction <$> mapM BS.readFile fileNames
-      toAction x = eitherDecode x :: FromJSON a => Either String a
---      parseFile fName = BS.readFile fName
+loadJType fileNames = partitionEithers <$> mapM parseFile fileNames
+    where 
+      parseFile fName = mapLeft (++" when reading file "++fName) <$> 
+                        eitherDecode <$> BS.readFile fName
 
 compileJObj :: M.Map Text Word32 -> JObject -> (Text, [P.Property])
 compileJObj propIds JObject {..} = (objname, L.map (compileProp propIds) objproperties)
@@ -124,6 +124,8 @@ loadAll = do
   let actions = L.map (compileJAct propIndices scriptIndices) jActs
   let objects = L.map (compileJObj propIndices) jObjs
   mapM_ print [actErrs, scriptErrs, objErrs]
+  print $ show actions
+  print $ show objects
   print $ show propIndices
 
 finaliseAction :: IT.LAction -> P.ActionT
